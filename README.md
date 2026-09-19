@@ -23,6 +23,18 @@ LEDs were lit: neither was ever asserted.
 
 Needs macOS 13 or newer, and at least one supported agent.
 
+### Homebrew
+
+```sh
+brew tap odiumuniverse/tap
+brew trust odiumuniverse/tap
+brew install --cask cuelight
+```
+
+Installs `cuelight.app` into `/Applications`, the `cuelight` CLI onto your
+`PATH`, and the zsh completion. Homebrew downloads with `curl`, so the app
+carries no quarantine flag and Gatekeeper does not block it.
+
 ### From source (recommended)
 
 ```sh
