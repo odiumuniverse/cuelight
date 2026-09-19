@@ -4,8 +4,17 @@ import AppKit
 import Foundation
 import ServiceManagement
 
-let githubURL = "https://github.com/odiumuniverse/claudeled"
-let showNotification = "com.odiumuniverse.claudeled.show"
+let githubURL = "https://github.com/odiumuniverse/cuelight"
+let showNotification = "com.odiumuniverse.cuelight.show"
+
+/// The events the lamp can be told to react to, in menu order, with working-language
+/// names rather than the raw values. Off by default: only "Turn finished" and
+/// "Permission prompt" are ticked in a fresh install.
+private let blinkEventChoices: [(event: SessionEvent, label: String)] = [
+    (.stop, "Turn finished"),       // what the README calls "waiting on you"
+    (.notify, "Permission prompt"), // what the README calls "blocked"
+    (.prompt, "Work in flight"),    // on turns the lamp into a busy light
+]
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
@@ -18,7 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ensureDirs()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = NSImage(systemSymbolName: "capslock",
-                                           accessibilityDescription: "claudeled")
+                                           accessibilityDescription: "cuelight")
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
@@ -41,17 +50,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
-        // `claudeled show` brings a hidden icon back from the command line.
+        // `cuelight show` brings a hidden icon back from the command line.
         DistributedNotificationCenter.default().addObserver(
             self, selector: #selector(showIcon),
             name: Notification.Name(showNotification), object: nil)
 
-        // The app does nothing without hooks, so install them on launch. Idempotent, and
-        // it re-points them if the bundle has moved since last run.
-        if !Hooks.installed {
-            do { try Hooks.install() }
-            catch { NSLog("claudeled: could not install hooks: \(error)") }
-        }
+        // Hooks are installed by hand, from the Agent hooks submenu or `cuelight hooks
+        // install`. All launch does is re-point hooks that are already ours at this
+        // bundle: a moved app must not leave a dead path behind.
+        Hooks.repointInstalled()
 
         registry.start()
         blinker = Blinker(registry: registry)
@@ -95,7 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             problem.isEnabled = false
             menu.addItem(problem)
 
-            let explain = NSMenuItem(title: "claudeled cannot reach the LEDs without it",
+            let explain = NSMenuItem(title: "cuelight cannot reach the LEDs without it",
                                      action: nil, keyEquivalent: "")
             explain.isEnabled = false
             menu.addItem(explain)
@@ -107,14 +114,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(fix)
             menu.addItem(.separator())
 
-            let quit = NSMenuItem(title: "Quit claudeled", action: #selector(quit),
+            let quit = NSMenuItem(title: "Quit cuelight", action: #selector(quit),
                                   keyEquivalent: "q")
             quit.target = self
             menu.addItem(quit)
             return
         }
 
-        let waiting = readSessions().filter { blinkingEvents.contains($0.event) }.count
+        // Counted by what "waiting" has always meant, not by the Blink on choice: a
+        // ticked-off event still means the agent needs you, it just does not blink.
+        let waiting = readSessions().filter { defaultBlinkingEvents.contains($0.event) }.count
         let header = NSMenuItem(
             title: waiting == 0 ? "No session waiting"
                                 : "\(waiting) session\(waiting == 1 ? "" : "s") waiting",
@@ -123,7 +132,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(header)
         menu.addItem(.separator())
 
-        let keyboardHeader = NSMenuItem(title: "Blink on", action: nil, keyEquivalent: "")
+        let keyboardHeader = NSMenuItem(title: "Blink on keyboards", action: nil,
+                                        keyEquivalent: "")
         keyboardHeader.isEnabled = false
         menu.addItem(keyboardHeader)
 
@@ -149,28 +159,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         menu.addItem(.separator())
 
-        // A submenu rather than four more rows: the keyboard list is already the long
-        // part of this menu, and the timeout is set once and then forgotten.
-        let blinkFor = NSMenuItem(title: "Blink for", action: nil, keyEquivalent: "")
-        let choices = NSMenu()
-        for preset in BlinkTimeout.presets {
-            let item = NSMenuItem(title: preset.label, action: #selector(setBlinkTimeout(_:)),
-                                  keyEquivalent: "")
-            item.target = self
-            item.representedObject = preset.seconds     // nil means forever
-            item.state = preset == config.blinkTimeout ? .on : .off
-            choices.addItem(item)
-        }
-        // A hand-edited config can hold a value no preset offers. Show it rather than
-        // leaving the submenu with nothing ticked.
-        if !BlinkTimeout.presets.contains(config.blinkTimeout) {
-            let custom = NSMenuItem(title: config.blinkTimeout.label, action: nil,
-                                    keyEquivalent: "")
-            custom.state = .on
-            choices.addItem(custom)
-        }
-        blinkFor.submenu = choices
-        menu.addItem(blinkFor)
+        menu.addItem(blinkForItem(config: config))
+        menu.addItem(blinkOnItem(config: config))
         menu.addItem(.separator())
 
         let stats = NSMenuItem(title: "Statistics…", action: #selector(openStats),
@@ -179,13 +169,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(stats)
         menu.addItem(.separator())
 
-        let hooksInstalled = Hooks.installed
-        let hooks = NSMenuItem(
-            title: hooksInstalled ? "Claude Code hooks installed" : "Install Claude Code hooks",
-            action: #selector(toggleHooks(_:)), keyEquivalent: "")
-        hooks.target = self
-        hooks.state = hooksInstalled ? .on : .off
-        menu.addItem(hooks)
+        menu.addItem(agentHooksItem())
 
         let login = NSMenuItem(title: "Start at login", action: #selector(toggleLogin(_:)),
                                keyEquivalent: "")
@@ -198,7 +182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let hide = NSMenuItem(title: "Hide icon", action: #selector(hideIcon),
                               keyEquivalent: "h")
         hide.target = self
-        hide.toolTip = "Keeps blinking. Launch claudeled again, or run `claudeled show`, "
+        hide.toolTip = "Keeps blinking. Launch cuelight again, or run `cuelight show`, "
             + "to bring the icon back."
         menu.addItem(hide)
 
@@ -207,7 +191,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         github.target = self
         menu.addItem(github)
 
-        let quit = NSMenuItem(title: "Quit claudeled", action: #selector(quit), keyEquivalent: "q")
+        let quit = NSMenuItem(title: "Quit cuelight", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
     }
@@ -239,12 +223,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         config.save()
     }
 
+    /// Like the keyboard ticks, this one reopens: the point of the submenu is to tick
+    /// several events in one visit.
+    @objc private func toggleBlinkingEvent(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let event = SessionEvent(rawValue: raw) else { return }
+        var config = Config.load()
+        config.toggleBlinking(event)
+        config.save()
+        reopenMenu()
+    }
+
     @objc private func toggleHooks(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let spec = AgentSpec.find(id) else { return }
         do {
-            if Hooks.installed { try Hooks.remove() } else { try Hooks.install() }
+            if Hooks.installed(spec) { try Hooks.remove(spec) } else { try Hooks.install(spec) }
         } catch {
             let alert = NSAlert()
-            alert.messageText = "Could not update ~/.claude/settings.json"
+            alert.messageText = "Could not update ~/\(spec.configPath)"
             alert.informativeText = "\(error)"
             alert.runModal()
         }
@@ -259,7 +256,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 try SMAppService.mainApp.register()
             }
         } catch {
-            NSLog("claudeled: login item toggle failed: \(error)")
+            NSLog("cuelight: login item toggle failed: \(error)")
         }
         reopenMenu()
     }
@@ -298,5 +295,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func quit() {
         blinker.stop()
         NSApp.terminate(nil)
+    }
+}
+
+// MARK: - submenu builders
+//
+// Kept out of the class body so the menu builder stays one flat, readable run of
+// construction and every submenu can be reasoned about on its own.
+
+extension AppDelegate {
+    /// A submenu rather than four more rows: the keyboard list is already the long
+    /// part of this menu, and the timeout is set once and then forgotten.
+    fileprivate func blinkForItem(config: Config) -> NSMenuItem {
+        let blinkFor = NSMenuItem(title: "Blink for", action: nil, keyEquivalent: "")
+        let choices = NSMenu()
+        for preset in BlinkTimeout.presets {
+            let item = NSMenuItem(title: preset.label, action: #selector(setBlinkTimeout(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.representedObject = preset.seconds     // nil means forever
+            item.state = preset == config.blinkTimeout ? .on : .off
+            choices.addItem(item)
+        }
+        // A hand-edited config can hold a value no preset offers. Show it rather than
+        // leaving the submenu with nothing ticked.
+        if !BlinkTimeout.presets.contains(config.blinkTimeout) {
+            let custom = NSMenuItem(title: config.blinkTimeout.label, action: nil,
+                                    keyEquivalent: "")
+            custom.state = .on
+            choices.addItem(custom)
+        }
+        blinkFor.submenu = choices
+        return blinkFor
+    }
+
+    /// Which events count as "needs you" is a separate choice from how long the lamp
+    /// blinks for, so it is a sibling submenu. Unticking everything is a real choice
+    /// here (the lamp just never lights); see Config.blinksOn.
+    fileprivate func blinkOnItem(config: Config) -> NSMenuItem {
+        let blinkOn = NSMenuItem(title: "Blink on", action: nil, keyEquivalent: "")
+        let events = NSMenu()
+        for choice in blinkEventChoices {
+            let item = NSMenuItem(title: choice.label,
+                                  action: #selector(toggleBlinkingEvent(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = choice.event.rawValue
+            item.state = config.blinksOn.contains(choice.event) ? .on : .off
+            events.addItem(item)
+        }
+        blinkOn.submenu = events
+        return blinkOn
+    }
+
+    /// Manual only: installing hooks is a deliberate choice, never something the app
+    /// does to an agent behind your back. Each item shows one agent's state.
+    fileprivate func agentHooksItem() -> NSMenuItem {
+        let agentHooks = NSMenuItem(title: "Agent hooks", action: nil, keyEquivalent: "")
+        let agents = NSMenu()
+        for spec in AgentSpec.all {
+            let item = NSMenuItem(title: spec.name, action: #selector(toggleHooks(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.representedObject = spec.id
+            item.toolTip = "~/\(spec.configPath)"
+            item.state = Hooks.installed(spec) ? .on : .off
+            agents.addItem(item)
+        }
+        agentHooks.submenu = agents
+        return agentHooks
     }
 }

@@ -1,4 +1,4 @@
-// StatsWindow.swift -- the same report as `claudeled stats`, for people who are
+// StatsWindow.swift -- the same report as `cuelight stats`, for people who are
 // already in the menu rather than in a terminal.
 
 import AppKit
@@ -26,7 +26,7 @@ final class StatsWindow: NSObject, NSWindowDelegate {
         let window = NSWindow(contentRect: frame,
                               styleMask: [.titled, .closable, .miniaturizable],
                               backing: .buffered, defer: false)
-        window.title = "claudeled"
+        window.title = "cuelight"
         window.center()
         window.isReleasedWhenClosed = false      // reopened from the menu, not rebuilt
         window.delegate = self
@@ -89,7 +89,7 @@ final class StatsWindow: NSObject, NSWindowDelegate {
         else { return }
 
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = "claudeled-\(period.rawValue).png"
+        panel.nameFieldStringValue = "cuelight-\(period.rawValue).png"
         panel.allowedContentTypes = [.png]
         panel.beginSheetModal(for: window!) { response in
             guard response == .OK, let url = panel.url else { return }

@@ -3,9 +3,9 @@
 // Every pair of consecutive events in a session brackets a gap, and the *earlier*
 // event says what was happening during it:
 //
-//   prompt -> ...   Claude was working (a turn, or a tool running)
-//   stop   -> ...   Claude was waiting for you
-//   notify -> ...   Claude was blocked on a permission prompt
+//   prompt -> ...   the agent was working (a turn, or a tool running)
+//   stop   -> ...   the agent was waiting for you
+//   notify -> ...   the agent was blocked on a permission prompt
 //
 // A gap longer than the idle cap is not counted at all: you went to lunch, or shut
 // the lid, and no honest number can tell that apart from thinking hard. Those are
@@ -166,10 +166,10 @@ func renderText(_ summaries: [Summary], projects: Report, cap: TimeInterval) -> 
 }
 
 func renderMarkdown(_ report: Report, label: String, cap: TimeInterval) -> String {
-    var lines = ["### Claude Code — \(label)", ""]
+    var lines = ["### cuelight — \(label)", ""]
     lines.append("| | time |")
     lines.append("| --- | ---: |")
-    lines.append("| Claude worked | \(formatDuration(report.totals.worked)) |")
+    lines.append("| worked | \(formatDuration(report.totals.worked)) |")
     lines.append("| waiting on you | \(formatDuration(report.totals.waiting)) |")
     if report.totals.blocked > 0 {
         lines.append("| blocked on a prompt | \(formatDuration(report.totals.blocked)) |")
@@ -223,9 +223,9 @@ private extension String {
 
 // MARK: - the default view
 
-let noEventsYet = "no events logged yet — the log starts filling on your next Claude Code turn"
+let noEventsYet = "no events logged yet — the log starts filling on your next agent turn"
 
-/// Today plus the last seven days, which is what `claudeled stats` prints bare.
+/// Today plus the last seven days, which is what `cuelight stats` prints bare.
 func statsText(now: Date = Date(), cap: TimeInterval = Config.load().idleCap) -> String {
     let week = readEvents(from: now.addingTimeInterval(-7 * 24 * 3600), to: now)
     guard !week.isEmpty else { return noEventsYet }

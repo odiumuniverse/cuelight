@@ -1,16 +1,30 @@
-#compdef claudeled
-# zsh completion for claudeled.
+#compdef cuelight
+# zsh completion for cuelight.
 # Keyboard names come from the running binary, so a newly plugged keyboard is
 # completable immediately -- nothing is baked in at install time.
 
-_claudeled_keyboards() {
+_cuelight_keyboards() {
   local -a names
   # One name per line. Names contain spaces, so split on newlines only.
-  names=(${(f)"$(claudeled devices --names 2>/dev/null)"})
+  names=(${(f)"$(cuelight devices --names 2>/dev/null)"})
   _describe -t keyboards 'keyboard' names
 }
 
-_claudeled() {
+_cuelight_agents() {
+  local -a agents
+  agents=(
+    'claude:Claude Code'
+    'opencode:opencode'
+    'gemini:Gemini CLI'
+    'antigravity:Antigravity'
+    'codex:Codex'
+    'cursor:Cursor'
+    'all:every supported agent'
+  )
+  _describe -t agents 'agent' agents
+}
+
+_cuelight() {
   local -a commands
   commands=(
     'devices:list keyboards and which are selected'
@@ -18,7 +32,8 @@ _claudeled() {
     'status:show tracked sessions and the current mode'
     'blink:show or set how long the lamp blinks for'
     'stats:time spent, today and over the last 7 days'
-    'hooks:print the Claude Code hook config to install'
+    'show:bring the menu bar icon back after hiding it'
+    'hooks:print or install the agents'"'"' hook config'
   )
 
   _arguments -C \
@@ -27,12 +42,12 @@ _claudeled() {
 
   case $state in
     command)
-      _describe -t commands 'claudeled command' commands
+      _describe -t commands 'cuelight command' commands
       ;;
     argument)
       case $words[1] in
         test)
-          _claudeled_keyboards
+          _cuelight_keyboards
           ;;
         devices)
           _arguments '--names[print names only, for scripts]'
@@ -63,9 +78,24 @@ _claudeled() {
             '--md[print a markdown table]' \
             '--card[write a PNG card]:file:_files -g "*.png"'
           ;;
+        hooks)
+          case $words[2] in
+            install|remove)
+              _cuelight_agents
+              ;;
+            *)
+              local -a verbs
+              verbs=(
+                'install:install hooks for one agent, or all'
+                'remove:remove hooks for one agent, or all'
+              )
+              _describe -t verbs 'hooks command' verbs
+              ;;
+          esac
+          ;;
       esac
       ;;
   esac
 }
 
-_claudeled "$@"
+_cuelight "$@"

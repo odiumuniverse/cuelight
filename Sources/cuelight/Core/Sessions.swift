@@ -2,16 +2,18 @@
 
 import Foundation
 
-/// What a hook last told us about a session.
+/// What a hook last told us about a session. The raw values are written to the event
+/// log on disk, so they never change. `end` is deliberately not a case: it exists to
+/// forget a session, not to record an event.
 enum SessionEvent: String, Codable {
-    case prompt   // work handed to Claude, or a tool just ran
-    case stop     // Claude finished its turn, the ball is yours
-    case notify   // Claude is blocked on a permission prompt
+    case prompt   // work handed to the agent, or a tool just ran
+    case stop     // the agent finished its turn, the ball is yours
+    case notify   // the agent is blocked on a permission prompt
 }
 
-/// Events that mean "Claude needs you". `prompt` is the absence of them: work is in
-/// flight, so the light stays dark.
-let blinkingEvents: Set<SessionEvent> = [.stop, .notify]
+/// The events that blink out of the box. Config.blinksOn can choose a different set;
+/// a choice there does not change what any event means.
+let defaultBlinkingEvents: Set<SessionEvent> = [.stop, .notify]
 
 /// Milliseconds, alternating on/off starting with on: a double pulse, mostly dark.
 let blinkPattern = [120, 120, 120, 900]
@@ -24,6 +26,7 @@ struct Session: Equatable {
     let pid: pid_t
     let event: SessionEvent
     let at: Date
+    let agent: String
 
     static func == (a: Session, b: Session) -> Bool { a.id == b.id && a.event == b.event }
 }
@@ -38,8 +41,11 @@ func readSessions() -> [Session] {
               let pid = pid_t(lines[0]),
               let stamp = TimeInterval(lines[1]),
               let event = SessionEvent(rawValue: lines[2]) else { return nil }
+        // Files written before multi-agent support have no fourth line; the only agent
+        // that wrote them is `claude`.
+        let agent = lines.count > 3 && !lines[3].isEmpty ? lines[3] : "claude"
         return Session(id: url.lastPathComponent, pid: pid, event: event,
-                       at: Date(timeIntervalSince1970: stamp))
+                       at: Date(timeIntervalSince1970: stamp), agent: agent)
     }
 }
 
@@ -61,9 +67,9 @@ func pruneSessions() {
     }
 }
 
-func record(session: String, event: SessionEvent, pid: pid_t) {
+func record(session: String, event: SessionEvent, pid: pid_t, agent: String) {
     ensureDirs()
-    let body = "\(pid)\n\(Date().timeIntervalSince1970)\n\(event.rawValue)\n"
+    let body = "\(pid)\n\(Date().timeIntervalSince1970)\n\(event.rawValue)\n\(agent)\n"
     try? body.write(to: sessionsDir.appendingPathComponent(session),
                     atomically: true, encoding: .utf8)
 }
@@ -79,14 +85,16 @@ func safeSessionID(_ raw: String) -> String {
 
 /// Aggregation across windows is OR: any session needing you lights the lamp.
 ///
-/// With a timeout, a session stops counting once it has been waiting longer than it.
-/// The session itself is left alone -- it is still waiting, and `status` and the menu
-/// still say so; only the light gives up. The next hook event rewrites `at`, so
-/// answering one window and leaving another re-arms the timer for the one you touched.
-func shouldBlink(sessions: [Session], timeout: BlinkTimeout = .forever,
-                 now: Date = Date()) -> Bool {
+/// `events` is which events count as "needing you" this run -- it comes from the
+/// user's Blink on choice, defaulting to the historical stop/notify pair. With a
+/// timeout, a session stops counting once it has been waiting longer than it. The
+/// session itself is left alone -- it is still waiting, and `status` and the menu still
+/// say so; only the light gives up. The next hook event rewrites `at`, so answering one
+/// window and leaving another re-arms the timer for the one you touched.
+func shouldBlink(sessions: [Session], events: Set<SessionEvent> = defaultBlinkingEvents,
+                 timeout: BlinkTimeout = .forever, now: Date = Date()) -> Bool {
     sessions.contains { session in
-        guard blinkingEvents.contains(session.event) else { return false }
+        guard events.contains(session.event) else { return false }
         guard let limit = timeout.seconds else { return true }
         return now.timeIntervalSince(session.at) < limit
     }

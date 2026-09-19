@@ -1,4 +1,4 @@
-// CLI.swift -- the face claudeled shows when it is given arguments.
+// CLI.swift -- the face cuelight shows when it is given arguments.
 
 import Foundation
 import IOKit
@@ -61,17 +61,18 @@ func cliStatus() {
     guard !sessions.isEmpty else { print("no sessions tracked"); return }
     let formatter = DateFormatter()
     formatter.dateFormat = "HH:mm:ss"
+    let blinking = Config.load().blinksOn
     for session in sessions.sorted(by: { $0.at < $1.at }) {
-        let blinking = blinkingEvents.contains(session.event) ? "BLINKING" : "quiet"
+        let state = blinking.contains(session.event) ? "BLINKING" : "quiet"
         let process = session.pid == 0
             ? "pid unknown"
             : (isAlive(session.pid) ? "pid \(session.pid)" : "pid \(session.pid) DEAD")
-        print("\(session.id)  \(session.event.rawValue)  " +
-              "\(formatter.string(from: session.at))  \(process)  \(blinking)")
+        print("\(session.id)  \(session.agent)  \(session.event.rawValue)  " +
+              "\(formatter.string(from: session.at))  \(process)  \(state)")
     }
 }
 
-/// `claudeled blink` reports, `claudeled blink <value>` sets. The running app picks the
+/// `cuelight blink` reports, `cuelight blink <value>` sets. The running app picks the
 /// change up within a second; nothing needs restarting.
 func cliBlink(_ argument: String?) {
     var config = Config.load()
@@ -106,7 +107,7 @@ private func defaultCardPath(_ period: Period) -> URL {
     let stamp = ISO8601DateFormatter()
     stamp.formatOptions = [.withFullDate]
     return FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Desktop/claudeled-\(period.rawValue)-"
+        .appendingPathComponent("Desktop/cuelight-\(period.rawValue)-"
                                 + "\(stamp.string(from: Date())).png")
 }
 
@@ -149,7 +150,7 @@ func cliStats(_ arguments: [String]) {
     let json = arguments.contains("--json")
     let markdown = arguments.contains("--md")
 
-    // Bare `claudeled stats` is the two-window view; anything else is one window.
+    // Bare `cuelight stats` is the two-window view; anything else is one window.
     guard period != nil || card || json || markdown else {
         print(statsText(now: now, cap: cap))
         return
@@ -200,60 +201,127 @@ private func statsPicker(cap: TimeInterval, now: Date) {
     }
 }
 
-/// Hooks pipe their JSON on stdin. Never fail loudly: a broken hook must not break Claude.
-func cliHook(_ eventName: String) {
+/// Hooks pipe their JSON on stdin. Read it to EOF first and unconditionally -- the
+/// agent may be waiting for the pipe to close -- then print the reply and exit 0 on
+/// every path. For Cursor and Antigravity a non-empty reply is parsed as a decision, so
+/// nothing here may print a diagnostic before the reply or fail with a non-zero status:
+/// a broken hook would block a shell command or abort a run. A malformed or unknown
+/// payload is simply ignored.
+func cliHook(_ agent: String, _ raw: String) {
     let data = FileHandle.standardInput.readDataToEndOfFile()
-    guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let raw = json["session_id"] as? String, !raw.isEmpty else { exit(0) }
-    let session = safeSessionID(raw)
-    if eventName == "end" {
-        forget(session)
-    } else if let event = SessionEvent(rawValue: eventName) {
-        record(session: session, event: event, pid: claudeAncestor())
-        logEvent(session: session, event: event,
-                 project: projectName(cwd: json["cwd"] as? String))
+
+    // Unknown agent or event still gets a reply: `{}` if even the agent is unknown.
+    let spec = AgentSpec.find(agent)
+    let hook = spec?.hook(for: raw)
+    let reply = hook?.reply ?? spec?.defaultReply ?? "{}"
+
+    /// Every exit goes through here, so the reply cannot be skipped by a failure path.
+    func finish() -> Never {
+        if !reply.isEmpty { print(reply) }
+        exit(0)
     }
-    exit(0)
+
+    guard let spec, let hook else { finish() }
+    guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let rawSession = payloadSessionID(json, keys: spec.sessionKeys),
+          !rawSession.isEmpty else { finish() }
+
+    let session = safeSessionID(rawSession)
+    if hook.argument == "end" {
+        forget(session)
+        finish()
+    }
+    guard let event = SessionEvent(rawValue: hook.argument) else { finish() }
+
+    // The opencode plugin sends its own pid; elsewhere the ancestor walk finds the
+    // agent. 0 means "unknown", which degrades to the TTL check.
+    let pid = spec.providesPID ? (payloadPID(json) ?? agentAncestor(matching: spec.processNames))
+                               : agentAncestor(matching: spec.processNames)
+    record(session: session, event: event, pid: pid, agent: spec.id)
+    logEvent(session: session, event: event,
+             project: projectName(cwd: payloadCwd(json, keys: spec.cwdKeys)),
+             agent: spec.id)
+    finish()
+}
+
+// MARK: - hooks
+
+/// `cuelight hooks` prints what to merge by hand; `install` and `remove` do the merge
+/// through the same App API the menu uses, so the two can never drift apart.
+func cliHooks(_ arguments: [String]) {
+    guard let verb = arguments.first else {
+        printHookConfigs()
+        return
+    }
+    guard verb == "install" || verb == "remove" else {
+        print("unknown hooks command: \(verb)\n")
+        print(usage)
+        exit(2)
+    }
+
+    let target = arguments.count > 1 ? arguments[1] : "all"
+    let specs = target == "all" ? AgentSpec.all : [AgentSpec.find(target)].compactMap { $0 }
+    guard !specs.isEmpty else {
+        print("unknown agent: \(target)")
+        print("agents: \(AgentSpec.all.map(\.id).joined(separator: ", ")) | all")
+        exit(2)
+    }
+
+    for spec in specs {
+        do {
+            if verb == "install" { try Hooks.install(spec) } else { try Hooks.remove(spec) }
+            print("\(verb == "install" ? "installed" : "removed") \(spec.id) — \(spec.name)")
+        } catch {
+            print("could not \(verb) \(spec.id): \(error.localizedDescription)")
+            exit(1)
+        }
+    }
+}
+
+/// The by-hand path: for every agent, the file to edit and the exact JSON (or JS) to
+/// put in it, built by the same merge engine the menu calls.
+private func printHookConfigs() {
+    let encoder: (Any) -> String = { value in
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: value,
+            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]),
+              let text = String(data: data, encoding: .utf8) else { return "{}" }
+        return text
+    }
+    for spec in AgentSpec.all {
+        print("\(spec.id) — \(spec.name)")
+        if spec.flavor == .opencodePlugin {
+            print("  file: ~/\(spec.configPath)")
+            print(OpencodePlugin.template(executable: Hooks.executable))
+        } else {
+            print("  merge into ~/\(spec.configPath):")
+            print(encoder(HookMerge.install(spec, into: [:], executable: Hooks.executable)))
+        }
+        print("")
+    }
 }
 
 let usage = """
-claudeled -- Caps Lock LED indicator for Claude Code
+cuelight -- Caps Lock LED indicator for the coding agents you run
 
-  claudeled                    run the menu bar app
-  claudeled devices            list keyboards and which ones blink
-  claudeled devices --names    names only, for shell completion
-  claudeled test <keyboard>    light a keyboard for 3s
-  claudeled status             show tracked sessions
-  claudeled blink              show how long the lamp blinks for
-  claudeled blink <duration>   5m | 30m | 90s | 1h | always
-  claudeled stats              time spent, today and over the last 7 days
-  claudeled stats <period>     week | month | year | all
-  claudeled stats -i           pick a period and a destination with the arrow keys
-  claudeled stats … --json     the same numbers, for scripts
-  claudeled stats … --md       a markdown table, for pasting
-  claudeled stats … --card [f] a PNG card, for sharing
-  claudeled show               bring the menu bar icon back after hiding it
-  claudeled hooks              print the hook config, to install it by hand
-  claudeled hook <event>       internal: called by the hooks themselves
+  cuelight                     run the menu bar app
+  cuelight devices             list keyboards and which ones blink
+  cuelight devices --names     names only, for shell completion
+  cuelight test <keyboard>     light a keyboard for 3s
+  cuelight status              show tracked sessions
+  cuelight blink               show how long the lamp blinks for
+  cuelight blink <duration>    5m | 30m | 90s | 1h | always
+  cuelight stats               time spent, today and over the last 7 days
+  cuelight stats <period>      week | month | year | all
+  cuelight stats -i            pick a period and a destination with the arrow keys
+  cuelight stats … --json      the same numbers, for scripts
+  cuelight stats … --md        a markdown table, for pasting
+  cuelight stats … --card [f]  a PNG card, for sharing
+  cuelight show                bring the menu bar icon back after hiding it
+  cuelight hooks               print each agent's hook config, to install by hand
+  cuelight hooks install <id>  install hooks: \(AgentSpec.all.map(\.id).joined(separator: " | ")) | all
+  cuelight hooks remove <id>   remove them again
+  cuelight hook <agent> <event>  internal: called by the hooks themselves
 
-config: ~/.config/claudeled/config.json
+config: ~/.config/cuelight/config.json
 """
-
-var hookConfig: String {
-    let lines = HookPlan.events.map { event in
-        "    \"\(event.claudeEvent)\": [{\"hooks\": [{\"type\": \"command\", " +
-        "\"command\": \"\(HookPlan.command(executable: Hooks.executable, argument: event.argument))\"}]}]"
-    }
-    return """
-    Merge into ~/.claude/settings.json:
-
-    {
-      "hooks": {
-    \(lines.joined(separator: ",\n"))
-      }
-    }
-
-    SubagentStop is deliberately absent: it is what keeps subagents from
-    blinking the light on behalf of the main agent.
-    """
-}

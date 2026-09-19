@@ -1,4 +1,4 @@
-// Permissions.swift -- Input Monitoring, the one grant claudeled cannot work without.
+// Permissions.swift -- Input Monitoring, the one grant cuelight cannot work without.
 //
 // macOS gates IOHIDDeviceOpen and element enumeration on keyboards behind Input
 // Monitoring, whether you intend to read keystrokes or only write to an LED. Without

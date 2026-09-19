@@ -1,4 +1,4 @@
-// TUI.swift -- the arrow-key picker behind `claudeled stats -i`.
+// TUI.swift -- the arrow-key picker behind `cuelight stats -i`.
 //
 // Deliberately small: two lists, no calendar, no text entry. Everything it can pick is
 // also reachable through flags, so this is a convenience, never the only way in.

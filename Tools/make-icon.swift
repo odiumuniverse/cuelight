@@ -1,4 +1,4 @@
-// Renders claudeled's app icon into Resources/claudeled.iconset.
+// Renders cuelight's app icon into Resources/cuelight.iconset.
 // Run through make-icon.sh, which turns the iconset into an .icns.
 //
 // The glyph is drawn rather than shipped as a binary blob so it stays reviewable
@@ -9,7 +9,7 @@ import Foundation
 
 let sizes = [16, 32, 64, 128, 256, 512, 1024]
 let outDir = URL(fileURLWithPath: CommandLine.arguments.count > 1
-                 ? CommandLine.arguments[1] : "claudeled.iconset")
+                 ? CommandLine.arguments[1] : "cuelight.iconset")
 try? FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
 
 func drawIcon(size: CGFloat) -> NSImage {

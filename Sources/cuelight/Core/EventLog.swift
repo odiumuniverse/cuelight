@@ -16,6 +16,7 @@ struct LoggedEvent: Codable, Equatable {
     let s: String          // session id
     let e: SessionEvent
     let p: String          // project: the basename of the session's cwd, never the path
+    let a: String?         // agent id; absent on lines written before multi-agent support
 
     var at: Date { Date(timeIntervalSince1970: t) }
 }
@@ -23,8 +24,10 @@ struct LoggedEvent: Codable, Equatable {
 /// `SessionEnd` is deliberately not logged: it is not a `SessionEvent`, and a gap
 /// needs two events to exist, so a session that simply stops producing them ends up
 /// with an unpaired last event either way.
-func logEvent(session: String, event: SessionEvent, project: String, at: Date = Date()) {
-    let entry = LoggedEvent(t: at.timeIntervalSince1970, s: session, e: event, p: project)
+func logEvent(session: String, event: SessionEvent, project: String, agent: String,
+              at: Date = Date()) {
+    let entry = LoggedEvent(t: at.timeIntervalSince1970, s: session, e: event, p: project,
+                            a: agent)
     guard let line = try? JSONEncoder().encode(entry) else { return }
 
     try? FileManager.default.createDirectory(at: eventsDir, withIntermediateDirectories: true)

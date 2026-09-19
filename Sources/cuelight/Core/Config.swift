@@ -17,13 +17,34 @@ struct Config: Codable, Equatable {
     var idleCap: TimeInterval { idleCapSeconds ?? 300 }
 
     /// How long the lamp keeps blinking once a session starts waiting. Absent means
-    /// forever, which is what claudeled did before this existed -- so an upgrade
-    /// changes nothing until the user asks it to. Optional for the same reason as
+    /// forever, which is what the app did before this existed -- so an upgrade changes
+    /// nothing until the user asks it to. Optional for the same reason as
     /// `idleCapSeconds`; see the note above.
     var blinkTimeoutSeconds: TimeInterval?
 
     var blinkTimeout: BlinkTimeout {
         blinkTimeoutSeconds.map(BlinkTimeout.after) ?? .forever
+    }
+
+    /// Which events blink, as raw `SessionEvent` values. Optional for the same
+    /// backward-compatibility reason as `idleCapSeconds`: absent means the historical
+    /// stop/notify default, so an upgrade changes nothing. Unlike `keyboards`, an
+    /// explicit `[]` is a real choice -- "no lamp" is reachable, and there is no
+    /// empty-means-all convention to protect here because the list stores what it
+    /// means. Unknown strings in a hand-edited file are dropped, not fatal.
+    var blinkingEvents: [String]?
+
+    var blinksOn: Set<SessionEvent> {
+        guard let blinkingEvents else { return defaultBlinkingEvents }
+        return Set(blinkingEvents.compactMap(SessionEvent.init(rawValue:)))
+    }
+
+    /// Tick or untick one event in the Blink on submenu. Sorted so the file on disk
+    /// does not churn with Set ordering.
+    mutating func toggleBlinking(_ event: SessionEvent) {
+        var events = blinksOn
+        if events.contains(event) { events.remove(event) } else { events.insert(event) }
+        blinkingEvents = events.map(\.rawValue).sorted()
     }
 
     static func load() -> Config {

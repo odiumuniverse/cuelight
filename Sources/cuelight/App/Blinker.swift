@@ -4,7 +4,7 @@ import Foundation
 
 final class Blinker {
     private let registry: KeyboardRegistry
-    private let queue = DispatchQueue(label: "claudeled.blink")
+    private let queue = DispatchQueue(label: "cuelight.blink")
     private var running = true
 
     init(registry: KeyboardRegistry) { self.registry = registry }
@@ -17,16 +17,20 @@ final class Blinker {
     func start() {
         queue.async { [self] in
             var lastPrune = Date.distantPast
-            // Re-read once a second alongside the prune, so changing the timeout from
-            // the menu or the CLI takes effect without a restart.
+            // Re-read once a second alongside the prune, so changing the timeout or the
+            // Blink on choice from the menu or the CLI takes effect without a restart.
+            var events = defaultBlinkingEvents
             var timeout = BlinkTimeout.forever
             while running {
                 if Date().timeIntervalSince(lastPrune) > 1 {
                     pruneSessions()
-                    timeout = Config.load().blinkTimeout
+                    let config = Config.load()
+                    events = config.blinksOn
+                    timeout = config.blinkTimeout
                     lastPrune = Date()
                 }
-                guard shouldBlink(sessions: readSessions(), timeout: timeout) else {
+                guard shouldBlink(sessions: readSessions(), events: events,
+                                  timeout: timeout) else {
                     registry.set(false)
                     Thread.sleep(forTimeInterval: 0.25)
                     continue

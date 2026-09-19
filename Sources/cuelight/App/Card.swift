@@ -51,14 +51,14 @@ enum Card {
         ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
 
         var y = height - margin - 26
-        let heading = text("Claude Code", 26, ink, weight: .semibold)
+        let heading = text("cuelight", 26, ink, weight: .semibold)
         heading.draw(at: NSPoint(x: margin, y: y))
         text(label, 26, dim).draw(at: NSPoint(x: margin + heading.size().width + 12, y: y))
 
         // The two headline numbers, side by side, so the card stays wide and short.
         y -= 86
         for (column, caption, value, colour) in [
-            (margin, "Claude worked", report.totals.worked, green),
+            (margin, "worked", report.totals.worked, green),
             (width / 2, "waiting on you", report.totals.waiting, ink),
         ] {
             text(caption, 15, dim).draw(at: NSPoint(x: column, y: y + 44))
@@ -99,6 +99,6 @@ enum Card {
             text += " · \(formatDuration(report.totals.away)) not counted "
                 + "(gaps over \(formatDuration(cap)))"
         }
-        return text + " · claudeled"
+        return text + " · cuelight"
     }
 }
