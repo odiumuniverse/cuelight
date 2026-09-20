@@ -37,7 +37,8 @@ enum OpencodePlugin {
         try? FileManager.default.removeItem(at: url)
     }
 
-    /// The generated ES module. opencode 1 loads the named export (a plugin input
+    /// The generated ES module: the shared helpers and the V1 hooks object, with the
+    /// V2 entrypoint appended. opencode 1 loads the named export (a plugin input
     /// returning a hooks object); opencode 2 loads the default export's `setup` and
     /// calls `server` only for the V1 loader, so one file serves both.
     static func template(executable: String) -> String {
@@ -119,15 +120,21 @@ enum OpencodePlugin {
             },
           };
         };
+        """
+        + v2Entrypoint
+    }
 
-        // opencode 2 (2.0+) loads a default export with an id and a setup function
-        // instead of the V1 hooks object, and hands event payloads over as `data`
-        // rather than `properties`. The V1 shape above stays as `server`, so one
-        // file serves both loaders.
-        //
-        // V2 loads one instance per location and every instance sees the whole
-        // server's event stream. Only the instance that owns a session's location
-        // forwards it, so the lamp hears one voice per event.
+    /// opencode 2 (2.0+) loads a default export with an id and a setup function
+    /// instead of the V1 hooks object, and hands event payloads over as `data`
+    /// rather than `properties`. The V1 shape above stays as `server`, so one file
+    /// serves both loaders.
+    ///
+    /// V2 loads one instance per location and every instance sees the whole server's
+    /// event stream. Only the instance that owns a session's location forwards it,
+    /// so the lamp hears one voice per event.
+    private static let v2Entrypoint = """
+        // opencode 2 loads a default export with an id and a setup function; the V1
+        // hooks object above stays as `server`, so one file serves both loaders.
         export default {
           id: "cuelight.opencode",
           server: CuelightPlugin,
@@ -209,7 +216,6 @@ enum OpencodePlugin {
           },
         };
         """
-    }
 
     /// A JSON string literal is also a valid JS string literal, and it survives paths
     /// with quotes or backslashes that plain interpolation would corrupt. Forward
