@@ -11,6 +11,11 @@ VERSION ?= 2.0.0-alpha
 APP      = build/cuelight.app
 BUNDLE   = com.odiumuniverse.cuelight
 
+# The bundle promises macOS 13 (LSMinimumSystemVersion below), but swiftc defaults to
+# the host's OS version: built on a newer runner, the app refuses to launch on anything
+# older with "built for macOS N which is newer than running OS". Pin the floor here.
+TARGET  ?= $(shell uname -m)-apple-macos13.0
+
 # Core/ is free of AppKit and IOKit, so the tests can compile against it directly.
 # App/ is the shell around it. A new file in either is picked up without editing this.
 CORE     = $(wildcard Sources/cuelight/Core/*.swift)
@@ -30,7 +35,7 @@ build: $(APP)
 
 $(APP): $(SOURCES) Resources/cuelight.icns Makefile
 	@mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
-	swiftc -O $(SOURCES) -o $(APP)/Contents/MacOS/cuelight
+	swiftc -O -target $(TARGET) $(SOURCES) -o $(APP)/Contents/MacOS/cuelight
 	@cp Resources/cuelight.icns $(APP)/Contents/Resources/cuelight.icns
 	@printf '%s\n' \
 	  '<?xml version="1.0" encoding="UTF-8"?>' \

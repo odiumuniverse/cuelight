@@ -16,6 +16,15 @@ jobs:
       - name: Build and package
         run: make release VERSION="${GITHUB_REF_NAME#v}"
 
+      # The runner's macOS is not the floor the bundle promises. Without this a runner
+      # image bump silently ships an app that refuses to launch on older systems.
+      - name: Check the deployment target
+        run: |
+          minos="$(otool -l build/cuelight.app/Contents/MacOS/cuelight \
+            | awk '/LC_BUILD_VERSION/{found=1} found && /minos/{print $2; exit}')"
+          echo "minos=${minos:-unknown}"
+          test "$minos" = "13.0" || { echo "::error::the binary targets ${minos:-unknown}, not 13.0"; exit 1; }
+
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
