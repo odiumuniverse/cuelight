@@ -37,8 +37,9 @@ enum OpencodePlugin {
         try? FileManager.default.removeItem(at: url)
     }
 
-    /// The generated ES module, shaped like the plugins opencode already loads (a
-    /// named export taking the plugin input and returning a hooks object).
+    /// The generated ES module. opencode 1 loads the named export (a plugin input
+    /// returning a hooks object); opencode 2 loads the default export's `setup` and
+    /// calls `server` only for the V1 loader, so one file serves both.
     static func template(executable: String) -> String {
         """
         \(marker)
@@ -117,6 +118,95 @@ enum OpencodePlugin {
               }
             },
           };
+        };
+
+        // opencode 2 (2.0+) loads a default export with an id and a setup function
+        // instead of the V1 hooks object, and hands event payloads over as `data`
+        // rather than `properties`. The V1 shape above stays as `server`, so one
+        // file serves both loaders.
+        //
+        // V2 loads one instance per location and every instance sees the whole
+        // server's event stream. Only the instance that owns a session's location
+        // forwards it, so the lamp hears one voice per event.
+        export default {
+          id: "cuelight.opencode",
+          server: CuelightPlugin,
+          setup(ctx) {
+            const here = ctx.location?.directory ?? "";
+            const childSessions = new Set();
+            const sessionLocations = new Map();
+            const controller = new AbortController();
+
+            const send = (rawEvent, sessionID, cwd) => {
+              if (!sessionID || childSessions.has(sessionID)) return;
+              forward(rawEvent, {
+                session_id: sessionID,
+                cwd: cwd || here || process.cwd(),
+                pid: process.pid,
+              });
+            };
+
+            // V2 renamed some of the events: questions became forms, and a finished
+            // turn is an execution. Forward the names the lamp already knows.
+            const RENAMED = new Map([
+              ["session.execution.succeeded", "session.idle"],
+              ["session.execution.interrupted", "session.idle"],
+              ["permission.rejected", "permission.replied"],
+              ["form.created", "question.asked"],
+              ["form.replied", "question.replied"],
+              ["form.cancelled", "question.rejected"],
+            ]);
+
+            const owns = (sessionID, location) => {
+              const directory = location?.directory;
+              if (directory) sessionLocations.set(sessionID, directory);
+              const known = sessionLocations.get(sessionID);
+              if (known !== undefined) return known === here;
+              // A session created before this instance loaded has no location yet.
+              // Ask the server, and let this one event through rather than lose it.
+              void ctx.session.get({ sessionID }).then((info) => {
+                const dir = info?.location?.directory;
+                if (dir) sessionLocations.set(sessionID, dir);
+              }).catch(() => {});
+              return true;
+            };
+
+            void ctx.session.hook("prompt", (event) => {
+              try {
+                if (owns(event?.sessionID)) send("chat.message", event?.sessionID, here);
+              } catch {
+                // never break opencode
+              }
+            });
+
+            void (async () => {
+              for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
+                try {
+                  const type = event?.type;
+                  const data = event?.data ?? {};
+                  if (type === "session.created") {
+                    if (data.sessionID && data.parentID) childSessions.add(data.sessionID);
+                    continue;
+                  }
+                  const sessionID = data.sessionID ?? data.form?.sessionID ?? "";
+                  if (childSessions.has(sessionID)) {
+                    if (type === "session.deleted") childSessions.delete(sessionID);
+                    continue;
+                  }
+                  if (FORWARDED.has(type) || RENAMED.has(type)) {
+                    if (owns(sessionID, event?.location)) {
+                      send(RENAMED.get(type) ?? type, sessionID, event?.location?.directory);
+                    }
+                    if (type === "session.deleted") sessionLocations.delete(sessionID);
+                  }
+                } catch {
+                  // never break opencode
+                }
+              }
+            })();
+
+            return () => controller.abort();
+          },
         };
         """
     }

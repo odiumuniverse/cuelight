@@ -746,6 +746,18 @@ check(!pluginText.contains("\"message.updated\""),
 check(pluginText.contains("parentID"), "child sessions are tracked")
 check(pluginText.contains("process.pid"), "the plugin sends its own pid")
 
+// opencode 2 loads a default export with an id and a setup function; V1 keeps
+// loading the named export through server().
+check(pluginText.contains("export default {"), "the template carries a V2 default export")
+check(pluginText.contains("id: \"cuelight.opencode\""), "the V2 plugin has a stable id")
+check(pluginText.contains("server: CuelightPlugin"), "V1 reaches the hooks through server()")
+check(pluginText.contains("ctx.event.subscribe"), "V2 subscribes to the server event stream")
+check(pluginText.contains("ctx.session.hook(\"prompt\""), "V2 reports prompts through the prompt hook")
+check(pluginText.contains("\"session.execution.succeeded\", \"session.idle\""),
+      "a finished V2 execution is forwarded as a stop")
+check(pluginText.contains("\"form.created\", \"question.asked\""),
+      "V2 forms are forwarded as the questions the lamp knows")
+
 // A user's own file at the same path is not ours to delete.
 try? "// my own opencode plugin".write(to: pluginURL, atomically: true, encoding: .utf8)
 OpencodePlugin.remove(from: pluginHome)
