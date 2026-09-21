@@ -13,6 +13,31 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # One-time setup: base64 of the self-signed .p12 in MACOS_SIGN_P12, its password
+      # in MACOS_SIGN_P12_PASSWORD, any throwaway keychain password in
+      # MACOS_SIGN_KEYCHAIN_PASSWORD. Until then the makefile signs ad-hoc.
+      - name: Import the signing identity
+        env:
+          SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+          SIGN_P12_PASSWORD: ${{ secrets.MACOS_SIGN_P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.MACOS_SIGN_KEYCHAIN_PASSWORD }}
+        run: |
+          if [ -z "$SIGN_P12" ]; then
+            echo "::warning::MACOS_SIGN_P12 is not set; releases fall back to ad-hoc signing"
+            exit 0
+          fi
+          {
+            echo "$SIGN_P12" | base64 --decode > signing.p12
+            security create-keychain -p "$KEYCHAIN_PASSWORD" signing.keychain
+            security unlock-keychain -p "$KEYCHAIN_PASSWORD" signing.keychain
+            security set-keychain-settings -lut 3600 signing.keychain
+            security import signing.p12 -k signing.keychain -P "$SIGN_P12_PASSWORD" \
+              -T /usr/bin/codesign -T /usr/bin/security
+            security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" signing.keychain >/dev/null
+            security list-keychains -d user -s signing.keychain $(security list-keychains -d user | tr -d '"')
+            rm -f signing.p12
+          } || echo "::warning::could not import the signing identity; releases fall back to ad-hoc signing"
+
       - name: Build and package
         run: make release VERSION="${GITHUB_REF_NAME#v}"
 
