@@ -1,10 +1,15 @@
-name: CI
+name: ci
 
 on:
   push:
-    branches: [master]
+    branches: [master, main]
   pull_request:
   workflow_dispatch:
+
+# Nothing here needs to write to the repository; artifact uploads use the job's
+# runtime token, not this one.
+permissions:
+  contents: read
 
 # A newer push to the same branch makes the running one pointless.
 concurrency:
@@ -12,6 +17,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Single-OS on purpose: the app is AppKit plus IOKit against a macOS 13 floor,
+  # so there is no second platform to matrix over.
   check:
     runs-on: macos-latest
     steps:
